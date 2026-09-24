@@ -1,0 +1,851 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP Manager</title>
+<style>
+  :root {
+    color-scheme: light dark;   /* native scrollbars, inputs and selects follow the theme */
+    --bg: #f5f5f3; --panel: #fff; --text: #1d1d1b; --muted: #77766f; --faint: #a9a8a1; --line: #e4e3de;
+    --accent: #c96442; --accent-soft: #f7e9e3; --ok: #2f8f5b; --ok-soft: #e3f3ea; --warn: #b7791f; --warn-soft: #fbf1dc;
+    --err: #c0392b; --chip: #efeee9; --input: #fbfbfa; --shadow: 0 10px 40px rgba(0,0,0,.12);
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1a1a19; --panel: #232322; --text: #ecebe6; --muted: #9c9a93; --faint: #6c6b66; --line: #353431;
+      --accent: #e08a67; --accent-soft: #3a2a23; --ok: #5cc28a; --ok-soft: #1f3328; --warn: #e0a84a; --warn-soft: #3a3020;
+      --err: #ef6f61; --chip: #2e2d2b; --input: #1d1d1c; --shadow: 0 10px 40px rgba(0,0,0,.5);
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Inter", sans-serif; }
+  input, select, textarea, button { font: inherit; color: inherit; }
+  button { cursor: pointer; }
+  .mono { font-family: var(--mono); }
+
+  /* header */
+  header { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 20px 24px 12px; }
+  .bar { max-width: 980px; margin: 0 auto; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .bar h1 { font-size: 18px; margin: 0 auto 0 0; letter-spacing: -.01em; }
+  .bar .search { width: 260px; max-width: 100%; }
+  .btn { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 7px 14px; white-space: nowrap; }
+  .btn:hover { border-color: var(--faint); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { filter: brightness(1.05); }
+  .btn.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+  .btn.ghost:hover { color: var(--text); background: var(--chip); }
+  .btn.danger { color: var(--err); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .legend { max-width: 980px; margin: 10px auto 0; display: flex; gap: 16px; color: var(--muted); font-size: 12px; flex-wrap: wrap; }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+
+  /* list */
+  main { max-width: 1028px; margin: 0 auto; padding: 4px 24px 60px; }
+  .item { display: flex; align-items: center; gap: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; margin-bottom: 8px; cursor: pointer; transition: border-color .12s; }
+  .item:hover { border-color: var(--faint); }
+  .item .info { flex: 1; min-width: 0; }
+  .item .title { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 15px; }
+  .item .sub { color: var(--muted); font-size: 12.5px; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge { font-size: 11px; font-weight: 500; padding: 1px 7px; border-radius: 10px; background: var(--chip); color: var(--muted); }
+  .badge.warn { background: var(--warn-soft); color: var(--warn); }
+  /* one fixed-width column per client, named once in the column header */
+  .pills { display: grid; grid-auto-flow: column; grid-auto-columns: 78px; gap: 2px; flex-shrink: 0; justify-items: center; }
+  /* the button is exactly switch-sized, so "+" and switches share one footprint */
+  .pill { display: grid; place-items: center; width: 40px; height: 22px; padding: 0; font-size: 13px; line-height: 1; border-radius: 11px;
+    border: 0; background: none; color: var(--muted); }
+  .pill.none { width: 48px; border: 1px dashed color-mix(in srgb, var(--faint) 60%, transparent); color: var(--faint); }
+  .pill.none:hover { color: var(--ok); border-color: var(--ok); }
+  /* switch: off = grey, on = green if the server answers, red if it doesn't, neutral while checking */
+  .sw { position: relative; display: inline-block; width: 40px; height: 22px; border-radius: 11px; background: var(--line); transition: background .15s; flex: none; }
+  .sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; transition: transform .15s; box-shadow: 0 1px 2px rgba(0,0,0,.25); }
+  .sw.on::after { transform: translateX(18px); }
+  .sw.on { background: var(--faint); }
+  .sw.on.ok { background: var(--ok); }
+  .sw.on.fail { background: var(--err); }
+  .pill:hover .sw { filter: brightness(1.12); }
+  .legend .sw { width: 24px; height: 14px; }
+  .legend .sw::after { width: 10px; height: 10px; }
+  .legend .sw.on::after { transform: translateX(10px); }
+  .cols { display: flex; justify-content: flex-end; padding: 0 17px 6px; }
+  .cols .pills > span { text-align: center; font-size: 11px; color: var(--muted); white-space: nowrap; }
+  /* health */
+  .h { display: inline-grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; font-size: 9px; font-weight: 700; color: #fff; flex: none; }
+  .h.ok { background: var(--ok); }
+  .h.fail { background: var(--err); }
+  .h.unk { background: var(--faint); }
+  .h.wait { border: 1.5px solid var(--faint); border-top-color: transparent; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .health { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
+  .health .line { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .health .line span.t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .health .line.ok { color: var(--ok); }
+  .health .line.fail { color: var(--err); }
+  .health .line.who { color: var(--muted); }
+  .health .who { color: var(--muted); white-space: nowrap; flex: none; }
+  .probe-line { flex-basis: 100%; display: flex; gap: 8px; align-items: flex-start; font-size: 12.5px; padding-top: 8px; border-top: 1px dashed var(--line); }
+  .probe-line .txt { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .probe-line pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-all; font: 11.5px/1.45 var(--mono); color: var(--muted); max-height: 120px; overflow: auto; }
+  .probe-line .again { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 0; text-decoration: underline; }
+  .probe-line .again:hover { color: var(--accent); }
+  /* tools popover */
+  .tools-link { flex: none; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; white-space: nowrap; }
+  #pop { position: fixed; z-index: 30; width: min(420px, calc(100vw - 32px)); max-height: 360px; overflow-y: auto;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow); padding: 6px; font-size: 12.5px; }
+  #pop[hidden] { display: none; }
+  #pop, .dbody, textarea.raw, .probe-line pre { scrollbar-width: thin; scrollbar-color: var(--faint) transparent; }
+  #pop .head { color: var(--muted); font-size: 11.5px; padding: 4px 8px 6px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+  #pop .tool { padding: 5px 8px; border-radius: 6px; }
+  #pop .tool:hover { background: var(--chip); }
+  #pop .tool .n { font-family: var(--mono); color: var(--text); }
+  #pop .tool .d { color: var(--muted); margin-top: 1px; line-height: 1.35; }
+
+  /* shown when the server is gone and the tab can't close itself */
+  #gone { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(3px); }
+  #gone[hidden] { display: none; }
+  #gone .card { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 22px 26px; max-width: 440px; margin: 16px; }
+  #gone h2 { margin: 0 0 8px; font-size: 17px; }
+  #gone p { margin: 0 0 12px; color: var(--muted); font-size: 13.5px; }
+  #gone code { display: block; font: 12.5px var(--mono); background: var(--input); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; color: var(--text); }
+
+  /* restart notice */
+  .restart { max-width: 980px; margin: 12px auto 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); border-radius: 12px; padding: 10px 14px; font-size: 13px; }
+  .restart[hidden] { display: none; }
+  .restart .msg { flex: 1; min-width: 220px; }
+  .restart .msg b { font-weight: 600; }
+  .restart .btn { padding: 5px 12px; font-size: 13px; }
+  .restart .later { border: 0; background: none; color: var(--muted); font-size: 13px; padding: 5px 6px; }
+  .restart .later:hover { color: var(--text); }
+  .empty { text-align: center; color: var(--muted); padding: 60px 0; }
+  .errbox { background: var(--warn-soft); color: var(--warn); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; }
+
+  /* drawer */
+  .overlay { position: fixed; inset: 0; background: rgba(0,0,0,.25); opacity: 0; pointer-events: none; transition: opacity .15s; z-index: 10; }
+  .overlay.open { opacity: 1; pointer-events: auto; }
+  aside { position: fixed; top: 0; right: 0; bottom: 0; width: min(600px, 100vw); background: var(--panel); box-shadow: var(--shadow); transform: translateX(100%); transition: transform .2s ease; z-index: 11; display: flex; flex-direction: column; }
+  aside.open { transform: none; }
+  .dhead { padding: 18px 22px 0; }
+  .dhead h2 { margin: 0 0 12px; font-size: 18px; display: flex; align-items: center; gap: 10px; }
+  .dhead .close { margin-left: auto; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); }
+  .tab { background: none; border: 0; padding: 8px 12px; color: var(--muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tab.active { color: var(--text); border-color: var(--accent); }
+  .dbody { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 18px 22px; }
+  .dfoot { border-top: 1px solid var(--line); padding: 14px 22px; display: flex; gap: 8px; align-items: center; }
+  .dfoot .spacer { flex: 1; }
+
+  .field { margin-bottom: 18px; }
+  .field > label, .section-title { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 6px; text-transform: uppercase; letter-spacing: .04em; }
+  .field .hint, .hint { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .input { width: 100%; background: var(--input); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; outline: none; }
+  .input:focus { border-color: var(--accent); }
+  .seg { display: inline-flex; background: var(--chip); border-radius: 9px; padding: 3px; gap: 2px; }
+  .seg button { border: 0; background: transparent; padding: 6px 14px; border-radius: 7px; color: var(--muted); }
+  .seg button.active { background: var(--panel); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+  .rows { display: grid; gap: 6px; }
+  .rowline { display: flex; gap: 6px; align-items: center; }
+  .rowline .input { flex: 1; min-width: 0; }
+  .rowline .k { flex: 0 0 38%; }
+  .icon { border: 0; background: none; color: var(--faint); width: 30px; height: 30px; border-radius: 6px; flex: none; display: grid; place-items: center; }
+  .icon:hover { background: var(--chip); color: var(--text); }
+  .add { border: 1px dashed var(--line); background: none; color: var(--muted); border-radius: 8px; padding: 6px 10px; font-size: 13px; justify-self: start; }
+  .add:hover { color: var(--accent); border-color: var(--accent); }
+  .secret { -webkit-text-security: disc; }
+  .secret.shown { -webkit-text-security: none; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-bottom: 12px; }
+
+  .banner { background: var(--warn-soft); color: var(--warn); border-radius: 10px; padding: 10px 12px; font-size: 13px; margin-bottom: 18px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .banner select { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px; }
+
+  .clients { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .client { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+  .client label.name { display: flex; align-items: center; gap: 8px; font-weight: 500; flex: 1; min-width: 0; cursor: pointer; }
+  .client .state { font-size: 12px; color: var(--muted); }
+  .client .state.on { color: var(--ok); }
+  .client .state.diff { color: var(--warn); }
+  input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
+
+  .switch { position: relative; width: 34px; height: 20px; flex: none; }
+  .switch input { display: none; }
+  .switch span { position: absolute; inset: 0; background: var(--line); border-radius: 10px; cursor: pointer; transition: .15s; }
+  .switch span::after { content: ""; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; transition: .15s; box-shadow: 0 1px 2px rgba(0,0,0,.2); }
+  .switch input:checked + span { background: var(--ok); }
+  .switch input:checked + span::after { transform: translateX(14px); }
+
+  .rawtabs { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+  .rawtabs button { border: 1px solid var(--line); background: var(--panel); border-radius: 20px; padding: 4px 12px; font-size: 13px; color: var(--muted); }
+  .rawtabs button.active { background: var(--text); color: var(--panel); border-color: var(--text); }
+  textarea.raw { width: 100%; min-height: 380px; background: var(--input); border: 1px solid var(--line); border-radius: 10px; padding: 12px; font: 12.5px/1.55 var(--mono); resize: vertical; outline: none; tab-size: 2; }
+  textarea.raw:focus { border-color: var(--accent); }
+
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translate(-50%, 20px); background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 10px; opacity: 0; transition: .2s; pointer-events: none; max-width: 90vw; white-space: pre-wrap; z-index: 20; font-size: 13px; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast.err { background: var(--err); color: #fff; }
+
+  @media (max-width: 640px) {
+    header, main { padding-left: 16px; padding-right: 16px; }
+    .item { flex-direction: column; align-items: stretch; gap: 10px; }
+    .search { width: 100%; order: 3; }
+    .cols { justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <h1>MCP servers</h1>
+    <input class="input search" type="search" id="q" placeholder="Search…">
+    <button class="btn" id="probeAllBtn" title="Launch every server the way its client does and check that it answers">Check all</button>
+    <button class="btn primary" id="addBtn">+ Add server</button>
+  </div>
+  <div class="legend">
+    <span><i class="sw on ok"></i>on, working</span>
+    <span><i class="sw on fail"></i>on, failing</span>
+    <span><i class="sw"></i>off</span>
+    <span>+ not added</span>
+    <span>Claude Code picks up changes in a new session</span>
+  </div>
+  <div class="restart" id="restartBar" hidden></div>
+</header>
+<main id="list"></main>
+
+<div class="overlay" id="overlay"></div>
+<aside id="drawer">
+  <div class="dhead">
+    <h2><span id="dTitle"></span><button class="icon close" id="closeBtn" title="Close">✕</button></h2>
+    <div class="tabs">
+      <button class="tab active" data-tab="form">Settings</button>
+      <button class="tab" data-tab="raw">Raw</button>
+    </div>
+  </div>
+  <div class="dbody" id="dBody"></div>
+  <div class="dfoot" id="dFoot"></div>
+</aside>
+<div id="toast"></div>
+<div id="pop" hidden></div>
+<div id="gone" hidden><div class="card">
+  <h2>mcp-manager has stopped</h2>
+  <p>It stops after 10 idle minutes or when asked to. Start it again and this page reloads by itself:</p>
+  <code>npx -y github:iceer101/mcp-manager</code>
+</div></div>
+
+<script>
+const $ = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+let sources = [];      // from /api/list
+let ed = null;         // drawer state
+const probes = {};     // "source|name" -> { cfg, pending, result }
+
+async function api(action, body = {}) {
+  let r;
+  try {
+    r = await fetch('/api/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  } catch {
+    throw new Error('The server is not responding — it may have stopped after 10 idle minutes. Start it again: npm start');
+  }
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+function toast(text, isErr) {
+  const t = $('#toast');
+  t.textContent = text; t.className = 'show' + (isErr ? ' err' : '');
+  clearTimeout(t._h); t._h = setTimeout(() => (t.className = ''), isErr ? 6000 : 2500);
+}
+
+const shortLabel = (s) => s.client === 'desktop' ? 'Claude' : s.client === 'codex' ? 'Codex'
+  : s.scope === 'user' ? 'Claude Code' : 'Claude Code · ' + s.scope.split('/').pop();
+const TRANSPORT = { stdio: 'local', http: 'HTTP', sse: 'SSE' };
+
+// name -> { name, per: { sourceId: server } }
+function groups() {
+  const map = new Map();
+  for (const s of sources) for (const x of s.servers) {
+    if (!map.has(x.name)) map.set(x.name, { name: x.name, per: {} });
+    map.get(x.name).per[s.id] = x;
+  }
+  return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function describe(n) {
+  return n.transport === 'stdio' ? [n.command, ...(n.args || [])].join(' ') : n.url;
+}
+
+// The variant shared by the most clients (first one wins a tie).
+function baseOf(g) {
+  const count = {};
+  for (const x of Object.values(g.per)) count[x.key] = (count[x.key] || 0) + 1;
+  const ids = sources.filter(s => g.per[s.id]).map(s => s.id);
+  return ids.reduce((best, id) => count[g.per[id].key] > count[g.per[best].key] ? id : best, ids[0]);
+}
+
+async function load() {
+  try { sources = (await api('list')).sources; renderList(); refreshRestart(); probeAll(false); }
+  catch (e) { toast(e.message, true); }
+}
+
+// ---------- restart notice ----------
+// Claude Desktop and the Codex app read their config only at startup.
+
+let restartApps = [];
+const restarting = new Set();
+
+function dismissed() {
+  try { return JSON.parse(localStorage.getItem('restartDismissed') || '{}'); } catch { return {}; }
+}
+function dismiss(list) {
+  const d = dismissed();
+  for (const a of list) d[a.client] = a.changedAt;
+  try { localStorage.setItem('restartDismissed', JSON.stringify(d)); } catch {}
+}
+
+async function refreshRestart() {
+  try { restartApps = (await api('restartStatus')).apps; } catch { return; }
+  renderRestart();
+}
+
+function renderRestart() {
+  const d = dismissed();
+  const need = restartApps.filter(a => (a.needsRestart && d[a.client] !== a.changedAt) || restarting.has(a.client));
+  const bar = $('#restartBar');
+  bar.hidden = !need.length;
+  if (!need.length) return;
+  const names = need.map(a => `<b>${esc(a.label)}</b>`).join(' and ');
+  bar.innerHTML = `
+    <span class="msg">⟳ Changes not applied yet: ${names} ${need.length > 1 ? 'are' : 'is'} running with the old config.</span>
+    ${need.map(a => `<button class="btn" data-restart="${esc(a.client)}" ${restarting.has(a.client) ? 'disabled' : ''}>
+      ${restarting.has(a.client) ? 'Restarting…' : 'Restart ' + esc(a.label)}</button>`).join('')}
+    <button class="later" id="restartLater" title="Hide until the next change">Later</button>`;
+}
+
+$('#restartBar').addEventListener('click', async (e) => {
+  if (e.target.id === 'restartLater') { dismiss(restartApps.filter(a => a.needsRestart)); return renderRestart(); }
+  const b = e.target.closest('[data-restart]');
+  if (!b) return;
+  const a = restartApps.find(x => x.client === b.dataset.restart);
+  const warn = a.client === 'desktop'
+    ? 'Claude Desktop will quit and reopen. All its windows and sessions, including Claude Code inside the app, will be interrupted. Continue?'
+    : 'Codex will quit and reopen. Running tasks in it will be interrupted. Continue?';
+  if (!confirm(warn)) return;
+  restarting.add(a.client); renderRestart();
+  try {
+    restartApps = (await api('restartApp', { client: a.client })).apps;
+    toast(`${a.label} restarted`);
+  } catch (err) { toast(err.message, true); }
+  restarting.delete(a.client); renderRestart();
+});
+
+// ---------- health checks ----------
+
+const pkey = (source, name) => source + '|' + name;
+const plural = (n) => n === 1 ? 'tool' : 'tools';
+
+function probeState(source, name) {
+  const x = sources.find(s => s.id === source)?.servers.find(v => v.name === name);
+  const p = probes[pkey(source, name)];
+  // A probe of an older config doesn't describe the current one.
+  return p && x && p.cfg === JSON.stringify(x.config) ? p : null;
+}
+
+function healthIcon(p) {
+  if (!p || p.pending) return '<i class="h wait"></i>';
+  if (p.result.ok) return '<i class="h ok">✓</i>';
+  return p.result.ok === null ? '<i class="h unk">?</i>' : '<i class="h fail">✕</i>';
+}
+
+function healthText(p) {
+  if (!p || p.pending) return 'checking…';
+  const r = p.result;
+  if (r.ok) return `${r.name ?? '—'}${r.version ? ' ' + r.version : ''}${r.tools != null ? ` · ${r.tools} ${plural(r.tools)}` : ''}`;
+  return r.stderr ? r.stderr.split('\n')[0] : r.error;
+}
+
+// Same as healthText, but the tool count is hoverable (shows the tool list).
+function healthHtml(p, source, name) {
+  const r = p && !p.pending ? p.result : null;
+  if (!r?.ok || r.tools == null) return `<span class="t">${esc(healthText(p))}</span>`;
+  return `<span class="t">${esc(`${r.name ?? '—'}${r.version ? ' ' + r.version : ''}`)} ·</span> `
+    + `<span class="tools-link" data-tools="${esc(source)}|${esc(name)}">${r.tools} ${plural(r.tools)}</span>`;
+}
+
+function healthTitle(p) {
+  if (!p || p.pending) return 'Checking…';
+  const r = p.result;
+  const when = r.at ? ` · checked ${new Date(r.at).toLocaleTimeString()}` : '';
+  return r.ok ? `Answers: ${healthText(p)} · ${r.ms} ms${when}` : `${r.error}${r.stderr ? '\n' + r.stderr : ''}${when}`;
+}
+
+let queue = [], running = 0;
+const MAX_PARALLEL = 4;
+
+function probeOne(source, name, force) {
+  const x = sources.find(s => s.id === source)?.servers.find(v => v.name === name);
+  if (!x) return;
+  const k = pkey(source, name), cfg = JSON.stringify(x.config);
+  if (!force && probes[k]?.cfg === cfg) return;
+  if (probes[k]?.pending && probes[k].cfg === cfg) return;
+  probes[k] = { cfg, pending: true };
+  queue.push({ source, name, cfg, force });
+  pump();
+}
+
+function pump() {
+  while (running < MAX_PARALLEL && queue.length) {
+    const job = queue.shift();
+    running++;
+    api('probe', { source: job.source, name: job.name, force: job.force })
+      .then(({ result }) => ({ result }), (e) => ({ result: { ok: false, error: e.message } }))
+      .then(({ result }) => {
+        const k = pkey(job.source, job.name);
+        if (probes[k]?.cfg === job.cfg) probes[k] = { cfg: job.cfg, result };
+        running--; pump(); renderHealth();
+      });
+  }
+  renderHealth();
+}
+
+function probeAll(force) {
+  for (const s of sources) for (const x of s.servers) probeOne(s.id, x.name, force);
+}
+
+// Updates health bits in place, so the list and an open drawer keep their state.
+function renderHealth() {
+  if (!ed) renderList();
+  else {
+    renderList();
+    for (const el of $$('[data-probe]')) {
+      const [source, name] = el.dataset.probe.split('|');
+      el.innerHTML = probeLineHtml(source, name);
+    }
+  }
+}
+
+function rowHealthHtml(g) {
+  // Group clients by what they answered, e.g. "✓ github-mcp-server 0.9.0 · 41 tools — Claude Desktop, Codex".
+  const byText = new Map();
+  for (const s of sources.filter(s => g.per[s.id])) {
+    const p = probeState(s.id, g.name);
+    const cls = !p || p.pending ? 'wait' : p.result.ok ? 'ok' : p.result.ok === null ? 'unk' : 'fail';
+    const text = healthText(p);
+    const key = cls + '|' + text;
+    if (!byText.has(key)) byText.set(key, { cls, text, p, src: s.id, who: [] });
+    byText.get(key).who.push(shortLabel(s));
+  }
+  const many = byText.size > 1;
+  return `<div class="health">${[...byText.values()].map(v => `
+    <div class="line ${v.cls === 'ok' ? 'ok' : v.cls === 'fail' ? 'fail' : 'who'}">
+      <span title="${esc(healthTitle(v.p))}" style="display:contents">${healthIcon(v.p)}</span>
+      ${v.cls === 'ok' ? healthHtml(v.p, v.src, g.name) : `<span class="t" title="${esc(healthTitle(v.p))}">${esc(v.text)}</span>`}
+      ${many || v.cls !== 'ok' ? `<span class="who">— ${esc(v.who.join(', '))}</span>` : ''}
+    </div>`).join('')}</div>`;
+}
+
+function probeLineHtml(source, name) {
+  const p = probeState(source, name);
+  const r = p && !p.pending ? p.result : null;
+  return `${healthIcon(p)}
+    <div class="txt">
+      <span style="color:var(--${r ? (r.ok ? 'ok' : r.ok === null ? 'muted' : 'err') : 'muted'})">${r?.ok ? healthHtml(p, source, name) : esc(r ? r.error : healthText(p))}</span>
+      ${r?.ok ? `<span class="hint"> · ${r.ms} ms</span>` : ''}
+      ${r?.stderr ? `<pre>${esc(r.stderr)}</pre>` : ''}
+    </div>
+    ${p && !p.pending ? `<button type="button" class="again" data-reprobe="${esc(source)}|${esc(name)}">check again</button>` : ''}`;
+}
+
+// ---------- list ----------
+
+function renderList() {
+  const q = $('#q').value.trim().toLowerCase();
+  const all = groups();
+  const list = all.filter(g => !q || g.name.toLowerCase().includes(q) ||
+    Object.values(g.per).some(x => describe(x.neutral).toLowerCase().includes(q)));
+
+  let html = sources.filter(s => s.error).map(s => `<div class="errbox">${esc(s.label)}: ${esc(s.error)}</div>`).join('');
+  if (list.length) html += `<div class="cols"><div class="pills">${sources.filter(s => !s.error).map(s => `<span>${esc(shortLabel(s))}</span>`).join('')}</div></div>`;
+  for (const g of list) {
+    const base = g.per[baseOf(g)];
+    const differs = new Set(Object.values(g.per).map(x => x.key)).size > 1;
+    html += `<div class="item" data-open="${esc(g.name)}">
+      <div class="info">
+        <div class="title">${esc(g.name)} <span class="badge">${TRANSPORT[base.neutral.transport]}</span>
+          ${differs ? '<span class="badge warn" title="Settings differ between clients">differs</span>' : ''}</div>
+        <div class="sub mono" title="${esc(describe(base.neutral))}">${esc(describe(base.neutral))}</div>
+        ${rowHealthHtml(g)}
+      </div>
+      <div class="pills">${sources.filter(s => !s.error).map(s => {
+        const x = g.per[s.id];
+        const cls = !x ? 'none' : x.enabled ? 'on' : 'off';
+        const tip = !x ? 'Not added — click to add' : x.enabled ? 'On — click to turn off' : 'Off — click to turn on';
+        const ps = x ? probeState(s.id, g.name) : null;
+        const hcls = !ps || ps.pending || ps.result.ok === null ? '' : ps.result.ok ? 'ok' : 'fail';
+        const htip = x ? '\n' + healthTitle(probeState(s.id, g.name)) : '';
+        return `<button class="pill ${cls}" data-pill="${esc(s.id)}" data-name="${esc(g.name)}" title="${esc(shortLabel(s) + ': ' + tip + htip)}">${x ? `<i class="sw ${x.enabled ? 'on' : ''} ${hcls}"></i>` : '+'}</button>`;
+      }).join('')}</div>
+    </div>`;
+  }
+  if (!list.length) html += `<div class="empty">${all.length ? 'Nothing found' : 'No servers yet'}</div>`;
+  $('#list').innerHTML = html;
+}
+
+$('#list').addEventListener('click', async (e) => {
+  const pill = e.target.closest('[data-pill]');
+  if (pill) {
+    e.stopPropagation();
+    const { pill: id, name } = pill.dataset;
+    const x = sources.find(s => s.id === id).servers.find(s => s.name === name);
+    if (!x) return openEditor(name, { check: id });
+    try {
+      await api('toggle', { source: id, name, enabled: !x.enabled });
+      toast(`${name} · ${shortLabel(sources.find(s => s.id === id))}: ${x.enabled ? 'off' : 'on'}`);
+    } catch (err) { toast(err.message, true); }
+    return load();
+  }
+  const item = e.target.closest('[data-open]');
+  if (item) openEditor(item.dataset.open);
+});
+
+// ---------- drawer: unified form ----------
+
+const emptyNeutral = () => ({ transport: 'stdio', command: '', args: [], env: {} });
+
+function openEditor(name, { check } = {}) {
+  const g = name ? groups().find(x => x.name === name) : null;
+  const baseId = g ? baseOf(g) : null;
+  ed = { name, isNew: !g, baseId, tab: 'form', rawSource: null, check };
+  ed.form = structuredClone(g ? g.per[baseId].neutral : emptyNeutral());
+  $('#dTitle').textContent = g ? name : 'New server';
+  setTab('form');
+  $('#overlay').classList.add('open');
+  $('#drawer').classList.add('open');
+  setTimeout(() => (ed.isNew ? $('#fName') : null)?.focus(), 200);
+}
+
+function closeEditor() {
+  $('#overlay').classList.remove('open');
+  $('#drawer').classList.remove('open');
+  ed = null;
+}
+
+function currentGroup() { return ed?.name ? groups().find(g => g.name === ed.name) : null; }
+
+function setTab(tab) {
+  ed.tab = tab;
+  $$('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+  $$('.tab')[1].style.display = ed.isNew ? 'none' : '';
+  tab === 'form' ? renderForm() : renderRaw();
+}
+
+function kvRows(kind, obj, secret) {
+  const rows = Object.entries(obj || {});
+  return `<div class="rows" data-kv="${kind}">
+    ${rows.map(([k, v]) => kvRow(k, v, secret)).join('')}
+    <button type="button" class="add" data-addkv="${kind}" data-secret="${secret ? 1 : ''}">+ add</button>
+  </div>`;
+}
+function kvRow(k = '', v = '', secret) {
+  return `<div class="rowline" data-kvrow>
+    <input class="input mono k" placeholder="NAME" value="${esc(k)}">
+    <input class="input mono v ${secret ? 'secret' : ''}" placeholder="value" value="${esc(v)}" autocomplete="off" spellcheck="false">
+    ${secret ? '<button type="button" class="icon" data-reveal title="Show / hide">👁</button>' : ''}
+    <button type="button" class="icon" data-del title="Remove">✕</button>
+  </div>`;
+}
+function argRow(v = '') {
+  return `<div class="rowline" data-argrow>
+    <input class="input mono" value="${esc(v)}" placeholder="argument" spellcheck="false">
+    <button type="button" class="icon" data-del title="Remove">✕</button>
+  </div>`;
+}
+
+function renderForm() {
+  const f = ed.form;
+  const g = currentGroup();
+  const differs = g && new Set(Object.values(g.per).map(x => x.key)).size > 1;
+  const installed = g ? sources.filter(s => g.per[s.id]) : [];
+
+  let html = '';
+  if (differs) {
+    html += `<div class="banner">Settings differ between clients. Showing values from
+      <select id="baseSel">${installed.map(s => `<option value="${esc(s.id)}" ${s.id === ed.baseId ? 'selected' : ''}>${esc(s.label)}</option>`).join('')}</select>
+    </div>`;
+  }
+  html += `
+    <div class="field"><label>Name</label>
+      <input class="input mono" id="fName" value="${esc(ed.name || '')}" placeholder="my-server" spellcheck="false">
+    </div>
+    <div class="field"><label>Transport</label>
+      <div class="seg" id="fTransport">
+        ${['stdio', 'http', 'sse'].map(t => `<button type="button" data-t="${t}" class="${f.transport === t ? 'active' : ''}">${{ stdio: 'Local process', http: 'Remote HTTP', sse: 'Remote SSE' }[t]}</button>`).join('')}
+      </div>
+    </div>`;
+
+  if (f.transport === 'stdio') {
+    html += `
+      <div class="field"><label>Command</label>
+        <input class="input mono" id="fCommand" value="${esc(f.command || '')}" placeholder="npx" spellcheck="false">
+      </div>
+      <div class="field"><label>Arguments</label>
+        <div class="rows" id="fArgs">${(f.args || []).map(argRow).join('')}
+          <button type="button" class="add" data-addarg>+ argument</button></div>
+      </div>
+      <div class="field"><label>Environment variables</label>${kvRows('env', f.env, true)}</div>
+      <details ${f.cwd ? 'open' : ''}><summary>Advanced</summary>
+        <div class="field"><label>Working directory</label>
+          <input class="input mono" id="fCwd" value="${esc(f.cwd || '')}" placeholder="/path/to/dir" spellcheck="false">
+          <div class="hint">Codex only; ignored by Claude.</div>
+        </div>
+      </details>`;
+  } else {
+    html += `
+      <div class="field"><label>URL</label>
+        <input class="input mono" id="fUrl" value="${esc(f.url || '')}" placeholder="https://example.com/mcp" spellcheck="false">
+      </div>
+      <div class="field"><label>HTTP headers</label>${kvRows('headers', f.headers, true)}</div>
+      <details ${f.bearerEnv ? 'open' : ''}><summary>Advanced</summary>
+        <div class="field"><label>Bearer token from environment variable</label>
+          <input class="input mono" id="fBearer" value="${esc(f.bearerEnv || '')}" placeholder="MY_TOKEN_ENV" spellcheck="false">
+          <div class="hint">Codex only. Claude Desktop reaches remote servers through <span class="mono">mcp-remote</span>, bundled as <span class="mono">vendor/mcp-remote.mjs</span>.</div>
+        </div>
+      </details>`;
+  }
+
+  html += `<div class="field" style="margin-top:8px"><div class="section-title">Clients</div><div class="clients">`;
+  for (const s of sources.filter(s => !s.error)) {
+    const x = g?.per[s.id];
+    const same = x && x.key === g.per[ed.baseId].key;
+    const checked = ed.isNew ? true : ed.check === s.id || same;
+    const state = !x ? '<span class="state">not added</span>'
+      : `<span class="state ${x.enabled ? 'on' : ''}">${x.enabled ? 'on' : 'off'}</span>${same ? '' : ' <span class="state diff">· different settings</span>'}`;
+    html += `<div class="client">
+      <label class="name"><input type="checkbox" class="target" value="${esc(s.id)}" ${checked ? 'checked' : ''}>${esc(s.label)}</label>
+      ${state}
+      ${x ? `<label class="switch" title="${x.enabled ? 'Turn off' : 'Turn on'}"><input type="checkbox" data-toggle="${esc(s.id)}" ${x.enabled ? 'checked' : ''}><span></span></label>
+             <button type="button" class="icon" data-remove="${esc(s.id)}" title="Remove from ${esc(s.label)}">🗑</button>
+             <div class="probe-line" data-probe="${esc(s.id)}|${esc(ed.name)}">${probeLineHtml(s.id, ed.name)}</div>` : ''}
+    </div>`;
+  }
+  html += `</div><div class="hint">Checked clients get these settings on save. The switch and 🗑 apply immediately.</div></div>`;
+
+  $('#dBody').innerHTML = html;
+  $('#dFoot').innerHTML = `
+    ${ed.isNew ? '' : '<button class="btn ghost danger" id="removeAllBtn">Remove everywhere</button>'}
+    <span class="spacer"></span>
+    <button class="btn" id="cancelBtn">Cancel</button>
+    <button class="btn primary" id="saveBtn">Save</button>`;
+}
+
+// Reads the form back into ed.form (so switching transport/base keeps what was typed).
+function collectForm() {
+  const f = { transport: $('#fTransport .active').dataset.t };
+  const kv = (kind) => Object.fromEntries($$(`[data-kv="${kind}"] [data-kvrow]`)
+    .map(r => [$('.k', r).value.trim(), $('.v', r).value]).filter(([k]) => k));
+  if (f.transport === 'stdio') {
+    f.command = $('#fCommand').value.trim();
+    f.args = $$('#fArgs [data-argrow] input').map(i => i.value).filter(v => v !== '');
+    const env = kv('env'); if (Object.keys(env).length) f.env = env;
+    const cwd = $('#fCwd').value.trim(); if (cwd) f.cwd = cwd;
+  } else {
+    f.url = $('#fUrl').value.trim();
+    const headers = kv('headers'); if (Object.keys(headers).length) f.headers = headers;
+    const b = $('#fBearer').value.trim(); if (b) f.bearerEnv = b;
+  }
+  ed.form = f;
+  ed.draftName = $('#fName').value;
+  return f;
+}
+
+async function save() {
+  const neutral = collectForm();
+  const name = $('#fName').value.trim();
+  const targets = $$('.target:checked').map(i => i.value);
+  if (ed.isNew && groups().some(g => g.name === name)) return toast(`Server "${name}" already exists`, true);
+  try {
+    const { warnings } = await api('saveUnified', { name, oldName: ed.isNew ? undefined : ed.name, neutral, targets });
+    toast('Saved' + (warnings?.length ? '\n' + warnings.join('\n') : ''));
+    closeEditor(); load();
+  } catch (e) { toast(e.message, true); }
+}
+
+// Refresh data but keep the drawer (and whatever was typed) open.
+async function refreshKeepingDrawer() {
+  if (ed.tab === 'form') collectForm();
+  await load();
+  const g = currentGroup();
+  if (!g) { closeEditor(); return; }
+  if (!g.per[ed.baseId]) ed.baseId = baseOf(g);
+  const draft = ed.draftName;
+  setTab(ed.tab);
+  if (draft != null && $('#fName')) $('#fName').value = draft;
+}
+
+$('#dBody').addEventListener('click', async (e) => {
+  const t = e.target;
+  if (t.closest('#fTransport button')) {
+    collectForm();
+    const nt = t.closest('button').dataset.t;
+    const wasRemote = ed.form.transport !== 'stdio';
+    ed.form.transport = nt;
+    if (nt !== 'stdio' && !wasRemote) ed.form.url ??= '';
+    renderForm(); $('#fName').value = ed.draftName; return;
+  }
+  if (t.closest('[data-addarg]')) { t.closest('[data-addarg]').insertAdjacentHTML('beforebegin', argRow()); t.closest('[data-addarg]').previousElementSibling.querySelector('input').focus(); return; }
+  if (t.closest('[data-addkv]')) {
+    const b = t.closest('[data-addkv]');
+    b.insertAdjacentHTML('beforebegin', kvRow('', '', !!b.dataset.secret));
+    b.previousElementSibling.querySelector('.k').focus(); return;
+  }
+  if (t.closest('[data-del]')) { t.closest('.rowline').remove(); return; }
+  const rp = t.closest('[data-reprobe]');
+  if (rp) { const [source, name] = rp.dataset.reprobe.split('|'); probeOne(source, name, true); return; }
+  if (t.closest('[data-reveal]')) { t.closest('.rowline').querySelector('.v').classList.toggle('shown'); return; }
+  const rm = t.closest('[data-remove]');
+  if (rm) {
+    const s = sources.find(x => x.id === rm.dataset.remove);
+    if (!confirm(`Remove "${ed.name}" from ${s.label}?`)) return;
+    try { await api('remove', { source: s.id, name: ed.name }); toast(`Removed from ${s.label}`); }
+    catch (err) { toast(err.message, true); }
+    return refreshKeepingDrawer();
+  }
+});
+
+$('#dBody').addEventListener('change', async (e) => {
+  if (e.target.id === 'baseSel') {
+    ed.baseId = e.target.value;
+    const draft = $('#fName').value;
+    ed.form = structuredClone(currentGroup().per[ed.baseId].neutral);
+    renderForm(); $('#fName').value = draft; return;
+  }
+  const tg = e.target.closest('[data-toggle]');
+  if (tg) {
+    try { await api('toggle', { source: tg.dataset.toggle, name: ed.name, enabled: tg.checked }); }
+    catch (err) { toast(err.message, true); }
+    refreshKeepingDrawer();
+  }
+});
+
+$('#dFoot').addEventListener('click', async (e) => {
+  const id = e.target.id;
+  if (id === 'cancelBtn') closeEditor();
+  if (id === 'saveBtn') save();
+  if (id === 'removeAllBtn') {
+    if (!confirm(`Remove "${ed.name}" from all clients?`)) return;
+    try { await api('removeAll', { name: ed.name }); toast('Removed'); closeEditor(); load(); }
+    catch (err) { toast(err.message, true); }
+  }
+  if (id === 'rawSaveBtn') {
+    try {
+      await api('saveRaw', { source: ed.rawSource, name: ed.name, text: $('#rawText').value });
+      toast('Saved'); refreshKeepingDrawer();
+    } catch (err) { toast(err.message, true); }
+  }
+});
+
+// ---------- drawer: raw ----------
+
+async function renderRaw() {
+  const g = currentGroup();
+  const installed = sources.filter(s => g.per[s.id]);
+  if (!installed.some(s => s.id === ed.rawSource)) ed.rawSource = installed[0].id;
+  const src = sources.find(s => s.id === ed.rawSource);
+  $('#dBody').innerHTML = `
+    <div class="rawtabs">${installed.map(s => `<button data-raw="${esc(s.id)}" class="${s.id === ed.rawSource ? 'active' : ''}">${esc(s.label)}</button>`).join('')}</div>
+    <textarea class="raw" id="rawText" spellcheck="false">loading…</textarea>
+    <div class="hint mono">${esc(src.file)}</div>
+    <div class="hint">The exact config as stored in the client's file. Saved to the selected client only.</div>`;
+  $('#dFoot').innerHTML = `<span class="spacer"></span>
+    <button class="btn" id="cancelBtn">Close</button>
+    <button class="btn primary" id="rawSaveBtn">Save to ${esc(src.label)}</button>`;
+  try { $('#rawText').value = (await api('raw', { source: src.id, name: ed.name })).text; }
+  catch (e) { $('#rawText').value = ''; toast(e.message, true); }
+}
+
+$('#dBody').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-raw]');
+  if (b) { ed.rawSource = b.dataset.raw; renderRaw(); }
+});
+$('#dBody').addEventListener('keydown', (e) => {
+  if (e.target.id === 'rawText' && e.key === 'Tab') {
+    e.preventDefault();
+    const el = e.target, p = el.selectionStart;
+    el.setRangeText('  ', p, el.selectionEnd, 'end');
+  }
+});
+
+$$('.tab').forEach(b => b.onclick = () => {
+  if (ed.tab === 'form') collectForm();
+  setTab(b.dataset.tab);
+  if (b.dataset.tab === 'form' && ed.draftName != null) $('#fName').value = ed.draftName;
+});
+
+// ---------- tools popover ----------
+
+const pop = $('#pop');
+let popHide = null;
+
+function showTools(el) {
+  const [source, name] = el.dataset.tools.split('|');
+  const p = probeState(source, name);
+  const list = p?.result?.toolList;
+  if (!list) return;
+  const r = p.result;
+  pop.innerHTML = `<div class="head">${esc(r.name ?? name)}${r.version ? ' ' + esc(r.version) : ''} · ${list.length} ${plural(list.length)}</div>`
+    + (list.length ? list.map(t => `<div class="tool"><div class="n">${esc(t.name)}</div>${t.description ? `<div class="d">${esc(t.description)}</div>` : ''}</div>`).join('')
+      : '<div class="tool"><div class="d">The server exposes no tools</div></div>');
+  pop.hidden = false;
+  const b = el.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  const left = Math.max(16, Math.min(b.left, innerWidth - w - 16));
+  const below = b.bottom + 6 + h <= innerHeight - 8;
+  pop.style.left = left + 'px';
+  pop.style.top = (below ? b.bottom + 6 : Math.max(8, b.top - 6 - h)) + 'px';
+}
+
+document.addEventListener('mouseover', (e) => {
+  const el = e.target.closest('[data-tools]');
+  if (el) { clearTimeout(popHide); showTools(el); return; }
+  if (e.target.closest('#pop')) { clearTimeout(popHide); return; }
+  if (!pop.hidden) { clearTimeout(popHide); popHide = setTimeout(() => (pop.hidden = true), 200); }
+});
+document.addEventListener('scroll', (e) => { if (e.target !== pop) pop.hidden = true; }, true);
+
+// ---------- global ----------
+
+$('#addBtn').onclick = () => openEditor(null);
+$('#probeAllBtn').onclick = () => probeAll(true);
+$('#closeBtn').onclick = closeEditor;
+$('#overlay').onclick = closeEditor;
+$('#q').oninput = renderList;
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && ed) closeEditor();
+  if ((e.metaKey || e.ctrlKey) && e.key === 's' && ed) { e.preventDefault(); ed.tab === 'form' ? save() : $('#rawSaveBtn')?.click(); }
+});
+window.addEventListener('focus', () => { if (!ed) load(); });
+
+// ---------- server gone ----------
+// The tab closes itself when the server stops (idle timeout or --stop). Browsers only allow that
+// for tabs opened by a script or with a single history entry; otherwise a notice is shown, and the
+// page reloads once the server is back.
+
+let healthMisses = 0;
+setInterval(async () => {
+  try {
+    const r = await fetch('/health', { cache: 'no-store' });
+    if (!r.ok) throw new Error();
+    if (healthMisses >= 2) location.reload();
+    healthMisses = 0;
+  } catch {
+    if (++healthMisses === 2) {
+      window.close();
+      setTimeout(() => { $('#gone').hidden = false; }, 300);
+    }
+  }
+}, 3000);
+
+load();
+</script>
+</body>
+</html>

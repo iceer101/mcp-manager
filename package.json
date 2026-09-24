@@ -1,0 +1,37 @@
+{
+  "name": "mcp-manager",
+  "version": "0.1.0",
+  "description": "Local web UI to view, edit, toggle and health-check MCP servers across Claude Desktop, Claude Code and Codex",
+  "license": "MIT",
+  "private": true,
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude",
+    "claude-desktop",
+    "claude-code",
+    "codex"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "main": "server.js",
+  "bin": {
+    "mcp-manager": "server.js"
+  },
+  "files": [
+    "server.js",
+    "lib",
+    "public",
+    "vendor"
+  ],
+  "scripts": {
+    "start": "node server.js",
+    "stop": "node server.js --stop",
+    "dev": "node server.js --serve",
+    "vendor:mcp-remote": "T=$(mktemp -d) && npm i --prefix $T --no-audit --no-fund mcp-remote@0.14.3 esbuild && $T/node_modules/.bin/esbuild $T/node_modules/mcp-remote/dist/proxy.js --bundle --platform=node --format=esm --target=node18 --minify --keep-names --legal-comments=none --outfile=vendor/mcp-remote.mjs --banner:js=\"// mcp-remote@0.14.3 bundled with esbuild (npm run vendor:mcp-remote); licenses: mcp-remote.LICENSES.txt\nimport{createRequire as __cr}from'module';const require=__cr(import.meta.url);\" && rm -rf $T"
+  },
+  "dependencies": {
+    "smol-toml": "^1.9.0"
+  }
+}
