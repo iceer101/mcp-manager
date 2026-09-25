@@ -3,7 +3,7 @@
 // rejects foreign Host/Origin headers (DNS-rebinding / CSRF guard), because
 // writing these configs effectively means running arbitrary commands.
 //
-//   mcp-manager            start in the background (or just open the page if running)
+//   mcp-manager            start in the background (replacing a running instance)
 //   mcp-manager --stop     stop the running instance
 //   mcp-manager --serve    run in this terminal
 //   --no-open              don't open the browser
@@ -20,7 +20,7 @@ const DATA_DIR = process.env.MCP_MANAGER_DATA;
 
 const { probe } = require('./lib/probe');
 const apps = require('./lib/apps');
-const { snapshot, getSource, getSources, toNeutral, comparable, saveUnified, getRaw, saveRaw } = require('./lib/sources');
+const { snapshot, getSource, getSources, toNeutral, fromNeutral, comparable, saveUnified, getRaw, saveRaw } = require('./lib/sources');
 
 const PORT = Number(process.env.PORT) || 4717;
 const HOST = '127.0.0.1';
@@ -87,7 +87,13 @@ const actions = {
   remove: ({ source, name }) => getSource(source).remove(name),
 
   // { name } -> removes from every client
-  removeAll: ({ name }) => { for (const s of getSources()) if (s.list().some(x => x.name === name)) s.remove(name); },
+  removeAll: ({ name }) => {
+    for (const s of getSources()) {
+      let has;
+      try { has = s.list().some(x => x.name === name); } catch { continue; } // unreadable client: flagged in the list
+      if (has) s.remove(name);
+    }
+  },
 
   // { source, name, force? } -> launches the server as that client would and does the MCP handshake
   probe: async ({ source, name, force }) => {
@@ -95,6 +101,17 @@ const actions = {
     const item = src.list().find(x => x.name === name);
     if (!item) throw new Error(`"${name}" not found in ${src.label}`);
     return { result: await probe(src.format, item.config, { force }) };
+  },
+
+  // { neutral, targets: [sourceId] } -> checks unsaved settings, launched the way each target client
+  // would launch them after a save (e.g. Claude Desktop through mcp-remote). Same launches run once.
+  probeDraft: async ({ neutral, targets }) => {
+    validateNeutral(neutral);
+    const srcs = (targets || []).map(getSource);
+    if (!srcs.length) srcs.push({ id: '', client: 'code', format: 'claude' });
+    const results = await Promise.all(srcs.map(async (s) =>
+      ({ source: s.id, result: await probe(s.format, fromNeutral(s, neutral).config, { force: true }) })));
+    return { results };
   },
 
   // Apps that are running with an older config than the one on disk.
@@ -180,11 +197,25 @@ function stopHint() {
   return `node ${path.relative(process.cwd(), __filename) || 'server.js'} --stop`;
 }
 
+// Stops a running instance and waits until its port is free.
+async function kill(running) {
+  try { process.kill(running.pid, 'SIGTERM'); } catch (e) { if (e.code !== 'ESRCH') throw e; }
+  for (let i = 0; i < 50; i++) {
+    if (!await health()) return true;
+    await new Promise(r => setTimeout(r, 100));
+  }
+  return false;
+}
+
 async function start() {
+  // A running instance may be an older version (updated npx cache, git pull): replace it with this one.
   const running = await health();
   if (running) {
-    console.log(`mcp-manager is already running: ${URL_}`);
-    return openBrowser();
+    if (!await kill(running)) {
+      console.error(`The running mcp-manager (pid ${running.pid}) did not stop, stop it manually.`);
+      process.exit(1);
+    }
+    console.log('Stopped the running mcp-manager, starting this version instead.');
   }
   fs.mkdirSync(DATA_DIR, { recursive: true });
   const log = fs.openSync(path.join(DATA_DIR, 'server.log'), 'a');
@@ -207,8 +238,7 @@ async function start() {
 async function stop() {
   const running = await health();
   if (!running) return console.log('mcp-manager is not running.');
-  process.kill(running.pid, 'SIGTERM');
-  console.log('mcp-manager stopped.');
+  console.log(await kill(running) ? 'mcp-manager stopped.' : `mcp-manager (pid ${running.pid}) did not stop.`);
 }
 
 if (ARGS.includes('--stop')) stop();

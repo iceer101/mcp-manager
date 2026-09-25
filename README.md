@@ -2,7 +2,7 @@
 
 # mcp-manager
 
-All your MCP servers from **Claude Desktop**, **Claude Code** and **Codex** on one local page.
+All your MCP servers from **Claude Desktop**, **Claude Code**, **Codex** and **Cursor** on one local page.
 
 ![macOS](https://img.shields.io/badge/macOS-000?logo=apple&logoColor=white)
 ![Node.js 18+](https://img.shields.io/badge/node-18%2B-5FA04E?logo=nodedotjs&logoColor=white)
@@ -14,8 +14,8 @@ All your MCP servers from **Claude Desktop**, **Claude Code** and **Codex** on o
 
 ## Features
 
-- **Toggle per client** — turn any server on or off in Claude Desktop, Claude Code or Codex.
-- **Health check** — green works, red is broken. Hover to see its tools or the error.
+- **Toggle per client** — turn any server on or off in Claude Desktop, Claude Code, Codex or Cursor.
+- **Health check** — green works, red is broken. Hover to see its tools or the error. Test new settings before saving them.
 - **Edit once** — change a server in one form and save it to every client.
 - **Restart prompt** — know when Claude Desktop or Codex needs a restart to pick up changes.
 
@@ -29,7 +29,7 @@ Requires macOS and Node.js 18+.
 npx -y github:iceer101/mcp-manager
 ```
 
-It starts in the background and opens http://localhost:4717. It stops by itself after 10 idle minutes, or right away with:
+It starts in the background and opens http://localhost:4717. Running it again restarts it, so an updated version takes over. It stops by itself after 10 idle minutes, or right away with:
 
 ```bash
 npx github:iceer101/mcp-manager --stop

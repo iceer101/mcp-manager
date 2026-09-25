@@ -1,7 +1,7 @@
 {
   "name": "mcp-manager",
   "version": "0.1.0",
-  "description": "Local web UI to view, edit, toggle and health-check MCP servers across Claude Desktop, Claude Code and Codex",
+  "description": "Local web UI to view, edit, toggle and health-check MCP servers across Claude Desktop, Claude Code, Codex and Cursor",
   "license": "MIT",
   "private": true,
   "keywords": [
@@ -10,7 +10,8 @@
     "claude",
     "claude-desktop",
     "claude-code",
-    "codex"
+    "codex",
+    "cursor"
   ],
   "engines": {
     "node": ">=18"

@@ -69,7 +69,10 @@
   .legend .sw::after { width: 10px; height: 10px; }
   .legend .sw.on::after { transform: translateX(10px); }
   .cols { display: flex; justify-content: flex-end; padding: 0 17px 6px; }
-  .cols .pills > span { text-align: center; font-size: 11px; color: var(--muted); white-space: nowrap; }
+  /* long names (project scopes) wrap to two lines within their column instead of spilling over neighbours */
+  .cols .pills { align-items: end; }
+  .cols .pills > span { width: 100%; text-align: center; font-size: 11px; line-height: 1.3; color: var(--muted);
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: break-word; }
   /* health */
   .h { display: inline-grid; place-items: center; width: 14px; height: 14px; border-radius: 50%; font-size: 9px; font-weight: 700; color: #fff; flex: none; }
   .h.ok { background: var(--ok); }
@@ -89,6 +92,14 @@
   .probe-line pre { margin: 4px 0 0; white-space: pre-wrap; word-break: break-all; font: 11.5px/1.45 var(--mono); color: var(--muted); max-height: 120px; overflow: auto; }
   .probe-line .again { border: 0; background: none; color: var(--muted); font-size: 12px; padding: 0; text-decoration: underline; }
   .probe-line .again:hover { color: var(--accent); }
+  /* test of unsaved settings in the drawer */
+  .draft-test { display: flex; align-items: center; gap: 10px; }
+  .draft-test .hint { margin-top: 0; }
+  #draftProbe { margin-top: 10px; }
+  #draftProbe:empty { display: none; }
+  #draftProbe.stale { opacity: .5; }
+  #draftProbe .line span.t { white-space: normal; overflow-wrap: anywhere; }
+  #draftProbe pre { margin: 2px 0 4px 20px; white-space: pre-wrap; word-break: break-all; font: 11.5px/1.45 var(--mono); color: var(--muted); max-height: 120px; overflow: auto; }
   /* tools popover */
   .tools-link { flex: none; text-decoration: underline dotted; text-underline-offset: 3px; cursor: help; white-space: nowrap; }
   #pop { position: fixed; z-index: 30; width: min(420px, calc(100vw - 32px)); max-height: 360px; overflow-y: auto;
@@ -258,7 +269,7 @@ function toast(text, isErr) {
   clearTimeout(t._h); t._h = setTimeout(() => (t.className = ''), isErr ? 6000 : 2500);
 }
 
-const shortLabel = (s) => s.client === 'desktop' ? 'Claude' : s.client === 'codex' ? 'Codex'
+const shortLabel = (s) => s.client === 'desktop' ? 'Claude' : s.client === 'codex' ? 'Codex' : s.client === 'cursor' ? 'Cursor'
   : s.scope === 'user' ? 'Claude Code' : 'Claude Code · ' + s.scope.split('/').pop();
 const TRANSPORT = { stdio: 'local', http: 'HTTP', sse: 'SSE' };
 
@@ -466,7 +477,7 @@ function renderList() {
     Object.values(g.per).some(x => describe(x.neutral).toLowerCase().includes(q)));
 
   let html = sources.filter(s => s.error).map(s => `<div class="errbox">${esc(s.label)}: ${esc(s.error)}</div>`).join('');
-  if (list.length) html += `<div class="cols"><div class="pills">${sources.filter(s => !s.error).map(s => `<span>${esc(shortLabel(s))}</span>`).join('')}</div></div>`;
+  if (list.length) html += `<div class="cols"><div class="pills">${sources.filter(s => !s.error).map(s => `<span title="${esc(s.label)}">${esc(shortLabel(s))}</span>`).join('')}</div></div>`;
   for (const g of list) {
     const base = g.per[baseOf(g)];
     const differs = new Set(Object.values(g.per).map(x => x.key)).size > 1;
@@ -597,7 +608,7 @@ function renderForm() {
       <details ${f.cwd ? 'open' : ''}><summary>Advanced</summary>
         <div class="field"><label>Working directory</label>
           <input class="input mono" id="fCwd" value="${esc(f.cwd || '')}" placeholder="/path/to/dir" spellcheck="false">
-          <div class="hint">Codex only; ignored by Claude.</div>
+          <div class="hint">Codex only; ignored by Claude and Cursor.</div>
         </div>
       </details>`;
   } else {
@@ -613,6 +624,11 @@ function renderForm() {
         </div>
       </details>`;
   }
+
+  html += `<div class="field"><div class="draft-test">
+      <button type="button" class="btn" id="testBtn" ${ed.draftProbe?.pending ? 'disabled' : ''}>Test</button>
+      <span class="hint">Runs these settings as the checked clients would, without saving.</span>
+    </div><div class="health" id="draftProbe">${draftProbeHtml()}</div></div>`;
 
   html += `<div class="field" style="margin-top:8px"><div class="section-title">Clients</div><div class="clients">`;
   for (const s of sources.filter(s => !s.error)) {
@@ -632,6 +648,7 @@ function renderForm() {
   html += `</div><div class="hint">Checked clients get these settings on save. The switch and 🗑 apply immediately.</div></div>`;
 
   $('#dBody').innerHTML = html;
+  markDraftStale();
   $('#dFoot').innerHTML = `
     ${ed.isNew ? '' : '<button class="btn ghost danger" id="removeAllBtn">Remove everywhere</button>'}
     <span class="spacer"></span>
@@ -641,6 +658,12 @@ function renderForm() {
 
 // Reads the form back into ed.form (so switching transport/base keeps what was typed).
 function collectForm() {
+  ed.form = readForm();
+  ed.draftName = $('#fName').value;
+  return ed.form;
+}
+
+function readForm() {
   const f = { transport: $('#fTransport .active').dataset.t };
   const kv = (kind) => Object.fromEntries($$(`[data-kv="${kind}"] [data-kvrow]`)
     .map(r => [$('.k', r).value.trim(), $('.v', r).value]).filter(([k]) => k));
@@ -654,9 +677,64 @@ function collectForm() {
     const headers = kv('headers'); if (Object.keys(headers).length) f.headers = headers;
     const b = $('#fBearer').value.trim(); if (b) f.bearerEnv = b;
   }
-  ed.form = f;
-  ed.draftName = $('#fName').value;
   return f;
+}
+
+// ---------- drawer: test unsaved settings ----------
+
+const draftKey = (neutral, targets) => JSON.stringify({ neutral, targets });
+const draftTargets = () => $$('.target:checked').map(i => i.value);
+
+async function testDraft() {
+  const neutral = collectForm(), targets = draftTargets();
+  const key = draftKey(neutral, targets);
+  ed.draftProbe = { key, pending: true };
+  renderDraftProbe();
+  let results;
+  try { results = (await api('probeDraft', { neutral, targets })).results; }
+  catch (e) { results = [{ source: '', result: { ok: false, error: e.message } }]; }
+  if (ed?.draftProbe?.key !== key) return;  // drawer closed or tested again meanwhile
+  ed.draftProbe = { key, results };
+  renderDraftProbe();
+}
+
+function renderDraftProbe() {
+  if (!$('#draftProbe')) return;
+  $('#draftProbe').innerHTML = draftProbeHtml();
+  $('#testBtn').disabled = !!ed.draftProbe?.pending;
+  markDraftStale();
+}
+
+// A result for settings that have been edited since is dimmed, not dropped.
+function markDraftStale() {
+  const d = ed?.draftProbe, el = $('#draftProbe');
+  if (!el || !d || d.pending) return;
+  const stale = draftKey(readForm(), draftTargets()) !== d.key;
+  el.classList.toggle('stale', stale);
+  el.title = stale ? 'The settings have changed since this test' : '';
+}
+
+// Clients that got the same answer share one line, like in the list.
+function draftProbeHtml() {
+  const d = ed?.draftProbe;
+  if (!d) return '';
+  if (d.pending) return `<div class="line who">${healthIcon(null)}<span class="t">checking…</span></div>`;
+  const byText = new Map();
+  d.results.forEach(({ source, result }, i) => {
+    const p = { result };
+    const cls = result.ok ? 'ok' : result.ok === null ? 'unk' : 'fail';
+    const key = [cls, healthText(p), result.stderr || ''].join('|');
+    if (!byText.has(key)) byText.set(key, { cls, p, i, who: [] });
+    const s = sources.find(x => x.id === source);
+    if (s) byText.get(key).who.push(shortLabel(s));
+  });
+  const many = byText.size > 1;
+  return [...byText.values()].map(({ cls, p, i, who }) => `
+    <div class="line ${cls === 'ok' ? 'ok' : cls === 'fail' ? 'fail' : 'who'}">
+      ${healthIcon(p)}
+      ${cls === 'ok' ? `${healthHtml(p, '__draft', i)}<span class="who">· ${p.result.ms} ms</span>` : `<span class="t">${esc(p.result.error)}</span>`}
+      ${many && who.length ? `<span class="who">— ${esc(who.join(', '))}</span>` : ''}
+    </div>${p.result.stderr ? `<pre>${esc(p.result.stderr)}</pre>` : ''}`).join('');
 }
 
 async function save() {
@@ -699,7 +777,8 @@ $('#dBody').addEventListener('click', async (e) => {
     b.insertAdjacentHTML('beforebegin', kvRow('', '', !!b.dataset.secret));
     b.previousElementSibling.querySelector('.k').focus(); return;
   }
-  if (t.closest('[data-del]')) { t.closest('.rowline').remove(); return; }
+  if (t.closest('[data-del]')) { t.closest('.rowline').remove(); markDraftStale(); return; }
+  if (t.closest('#testBtn')) { testDraft(); return; }
   const rp = t.closest('[data-reprobe]');
   if (rp) { const [source, name] = rp.dataset.reprobe.split('|'); probeOne(source, name, true); return; }
   if (t.closest('[data-reveal]')) { t.closest('.rowline').querySelector('.v').classList.toggle('shown'); return; }
@@ -713,7 +792,10 @@ $('#dBody').addEventListener('click', async (e) => {
   }
 });
 
+$('#dBody').addEventListener('input', () => { if (ed?.tab === 'form') markDraftStale(); });
+
 $('#dBody').addEventListener('change', async (e) => {
+  if (e.target.classList.contains('target')) { markDraftStale(); return; }
   if (e.target.id === 'baseSel') {
     ed.baseId = e.target.value;
     const draft = $('#fName').value;
@@ -789,7 +871,7 @@ let popHide = null;
 
 function showTools(el) {
   const [source, name] = el.dataset.tools.split('|');
-  const p = probeState(source, name);
+  const p = source === '__draft' ? { result: ed?.draftProbe?.results?.[name]?.result } : probeState(source, name);
   const list = p?.result?.toolList;
   if (!list) return;
   const r = p.result;
