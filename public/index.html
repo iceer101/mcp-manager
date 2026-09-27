@@ -130,6 +130,11 @@
   .restart .later { border: 0; background: none; color: var(--muted); font-size: 13px; padding: 5px 6px; }
   .restart .later:hover { color: var(--text); }
   .empty { text-align: center; color: var(--muted); padding: 60px 0; }
+  /* hidden servers: out of the list unless shown or found by search */
+  .item.hidden-item { opacity: .6; }
+  .item.hidden-item:hover { opacity: 1; }
+  .more { display: flex; justify-content: center; margin-top: 12px; }
+  .more .btn { font-size: 13px; }
   .errbox { background: var(--warn-soft); color: var(--warn); border-radius: 10px; padding: 10px 14px; margin-bottom: 12px; font-size: 13px; }
 
   /* drawer */
@@ -190,6 +195,13 @@
   .rawtabs button.active { background: var(--text); color: var(--panel); border-color: var(--text); }
   textarea.raw { width: 100%; min-height: 380px; background: var(--input); border: 1px solid var(--line); border-radius: 10px; padding: 12px; font: 12.5px/1.55 var(--mono); resize: vertical; outline: none; tab-size: 2; }
   textarea.raw:focus { border-color: var(--accent); }
+  textarea.raw.import { min-height: 260px; }
+  /* what the pasted JSON was read as */
+  #jsonStatus { margin: 8px 0 14px; }
+  #jsonStatus:empty { display: none; }
+  #jsonStatus .line span.t { white-space: normal; overflow-wrap: anywhere; }
+  #jsonStatus select { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; font-size: 12.5px; }
+  #jsonStatus .field { margin: 10px 0 0; }
 
   #toast { position: fixed; bottom: 20px; left: 50%; transform: translate(-50%, 20px); background: var(--text); color: var(--bg); padding: 9px 16px; border-radius: 10px; opacity: 0; transition: .2s; pointer-events: none; max-width: 90vw; white-space: pre-wrap; z-index: 20; font-size: 13px; }
   #toast.show { opacity: 1; transform: translate(-50%, 0); }
@@ -248,6 +260,8 @@ const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 let sources = [];      // from /api/list
+let hidden = new Set(); // names hidden from the list, from /api/list
+let showHidden = false;
 let ed = null;         // drawer state
 const probes = {};     // "source|name" -> { cfg, pending, result }
 
@@ -296,7 +310,11 @@ function baseOf(g) {
 }
 
 async function load() {
-  try { sources = (await api('list')).sources; renderList(); refreshRestart(); probeAll(false); }
+  try {
+    const r = await api('list');
+    sources = r.sources; hidden = new Set(r.hidden);
+    renderList(); refreshRestart(); probeAll(false);
+  }
   catch (e) { toast(e.message, true); }
 }
 
@@ -420,8 +438,13 @@ function pump() {
   renderHealth();
 }
 
+// Hidden servers are checked only once they are on screen (shown, found, or opened).
 function probeAll(force) {
-  for (const s of sources) for (const x of s.servers) probeOne(s.id, x.name, force);
+  for (const g of listed()) probeGroup(g, force);
+}
+
+function probeGroup(g, force) {
+  for (const id of Object.keys(g.per)) probeOne(id, g.name, force);
 }
 
 // Updates health bits in place, so the list and an open drawer keep their state.
@@ -470,21 +493,31 @@ function probeLineHtml(source, name) {
 
 // ---------- list ----------
 
-function renderList() {
+// Groups matching the search; hidden ones only while shown or searched for.
+function listed() {
   const q = $('#q').value.trim().toLowerCase();
+  return groups().filter(g => q ? g.name.toLowerCase().includes(q) ||
+    Object.values(g.per).some(x => describe(x.neutral).toLowerCase().includes(q))
+    : showHidden || !hidden.has(g.name));
+}
+
+function renderList() {
+  const q = $('#q').value.trim();
   const all = groups();
-  const list = all.filter(g => !q || g.name.toLowerCase().includes(q) ||
-    Object.values(g.per).some(x => describe(x.neutral).toLowerCase().includes(q)));
+  const list = listed();
+  const nHidden = all.filter(g => hidden.has(g.name)).length;
 
   let html = sources.filter(s => s.error).map(s => `<div class="errbox">${esc(s.label)}: ${esc(s.error)}</div>`).join('');
   if (list.length) html += `<div class="cols"><div class="pills">${sources.filter(s => !s.error).map(s => `<span title="${esc(s.label)}">${esc(shortLabel(s))}</span>`).join('')}</div></div>`;
   for (const g of list) {
     const base = g.per[baseOf(g)];
     const differs = new Set(Object.values(g.per).map(x => x.key)).size > 1;
-    html += `<div class="item" data-open="${esc(g.name)}">
+    const isHidden = hidden.has(g.name);
+    html += `<div class="item ${isHidden ? 'hidden-item' : ''}" data-open="${esc(g.name)}">
       <div class="info">
         <div class="title">${esc(g.name)} <span class="badge">${TRANSPORT[base.neutral.transport]}</span>
-          ${differs ? '<span class="badge warn" title="Settings differ between clients">differs</span>' : ''}</div>
+          ${differs ? '<span class="badge warn" title="Settings differ between clients">differs</span>' : ''}
+          ${isHidden ? '<span class="badge" title="Hidden from the list. Open it to show it again">hidden</span>' : ''}</div>
         <div class="sub mono" title="${esc(describe(base.neutral))}">${esc(describe(base.neutral))}</div>
         ${rowHealthHtml(g)}
       </div>
@@ -499,11 +532,13 @@ function renderList() {
       }).join('')}</div>
     </div>`;
   }
-  if (!list.length) html += `<div class="empty">${all.length ? 'Nothing found' : 'No servers yet'}</div>`;
+  if (!list.length) html += `<div class="empty">${all.length ? (q ? 'Nothing found' : 'All servers are hidden') : 'No servers yet'}</div>`;
+  if (nHidden && !q) html += `<div class="more"><button class="btn ghost" id="hiddenBtn">${showHidden ? 'Hide' : 'Show'} ${nHidden} hidden</button></div>`;
   $('#list').innerHTML = html;
 }
 
 $('#list').addEventListener('click', async (e) => {
+  if (e.target.id === 'hiddenBtn') { showHidden = !showHidden; renderList(); probeAll(false); return; }
   const pill = e.target.closest('[data-pill]');
   if (pill) {
     e.stopPropagation();
@@ -524,16 +559,23 @@ $('#list').addEventListener('click', async (e) => {
 
 const emptyNeutral = () => ({ transport: 'stdio', command: '', args: [], env: {} });
 
+// A new server opens on the tab (Settings or JSON) used last time.
+function newServerTab() {
+  try { return localStorage.getItem('newServerTab') === 'json' ? 'json' : 'form'; } catch { return 'form'; }
+}
+
 function openEditor(name, { check } = {}) {
   const g = name ? groups().find(x => x.name === name) : null;
   const baseId = g ? baseOf(g) : null;
-  ed = { name, isNew: !g, baseId, tab: 'form', rawSource: null, check };
+  ed = { name, isNew: !g, baseId, tab: 'form', rawSource: null, check, json: '' };
   ed.form = structuredClone(g ? g.per[baseId].neutral : emptyNeutral());
+  ed.jsonKey = formKey(name || '', ed.form);
+  if (g) probeGroup(g, false);             // a hidden server may not have been checked yet
   $('#dTitle').textContent = g ? name : 'New server';
-  setTab('form');
+  setTab(g ? 'form' : newServerTab());
   $('#overlay').classList.add('open');
   $('#drawer').classList.add('open');
-  setTimeout(() => (ed.isNew ? $('#fName') : null)?.focus(), 200);
+  setTimeout(() => (ed.isNew ? $(ed.tab === 'json' ? '#jsonText' : '#fName') : null)?.focus(), 200);
 }
 
 function closeEditor() {
@@ -544,11 +586,24 @@ function closeEditor() {
 
 function currentGroup() { return ed?.name ? groups().find(g => g.name === ed.name) : null; }
 
+// The second tab is JSON import for a new server and the per-client raw config for an existing one.
 function setTab(tab) {
   ed.tab = tab;
+  const second = $$('.tab')[1];
+  second.dataset.tab = ed.isNew ? 'json' : 'raw';
+  second.textContent = ed.isNew ? 'JSON' : 'Raw';
   $$('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
-  $$('.tab')[1].style.display = ed.isNew ? 'none' : '';
-  tab === 'form' ? renderForm() : renderRaw();
+  tab === 'form' ? renderForm() : tab === 'json' ? renderJson() : renderRaw();
+}
+
+async function switchTab(tab) {
+  if (tab === ed.tab) return;
+  if (ed.tab !== 'raw') ed.targets = draftTargets();
+  if (ed.tab === 'form') collectForm();
+  if (ed.tab === 'json' && !await applyJson()) return;
+  if (tab === 'json') syncJsonFromForm();
+  if (ed.isNew) try { localStorage.setItem('newServerTab', tab); } catch {}
+  setTab(tab);
 }
 
 function kvRows(kind, obj, secret) {
@@ -587,7 +642,7 @@ function renderForm() {
   }
   html += `
     <div class="field"><label>Name</label>
-      <input class="input mono" id="fName" value="${esc(ed.name || '')}" placeholder="my-server" spellcheck="false">
+      <input class="input mono" id="fName" value="${esc(ed.draftName ?? ed.name ?? '')}" placeholder="my-server" spellcheck="false">
     </div>
     <div class="field"><label>Transport</label>
       <div class="seg" id="fTransport">
@@ -625,16 +680,33 @@ function renderForm() {
       </details>`;
   }
 
-  html += `<div class="field"><div class="draft-test">
+  html += testHtml() + clientsHtml(g);
+
+  $('#dBody').innerHTML = html;
+  markDraftStale();
+  $('#dFoot').innerHTML = `
+    ${ed.isNew ? '' : `<button class="btn ghost danger" id="removeAllBtn">Remove everywhere</button>
+      <button class="btn ghost" id="hideBtn" title="${hidden.has(ed.name)
+        ? 'Show it in the list again' : 'Keep it out of the list (it stays in the clients as is). Search still finds it'}">
+        ${hidden.has(ed.name) ? 'Show in list' : 'Hide from list'}</button>`}
+    <span class="spacer"></span>
+    <button class="btn" id="cancelBtn">Cancel</button>
+    <button class="btn primary" id="saveBtn">Save</button>`;
+}
+
+function testHtml() {
+  return `<div class="field"><div class="draft-test">
       <button type="button" class="btn" id="testBtn" ${ed.draftProbe?.pending ? 'disabled' : ''}>Test</button>
       <span class="hint">Runs these settings as the checked clients would, without saving.</span>
     </div><div class="health" id="draftProbe">${draftProbeHtml()}</div></div>`;
+}
 
-  html += `<div class="field" style="margin-top:8px"><div class="section-title">Clients</div><div class="clients">`;
+function clientsHtml(g) {
+  let html = `<div class="field" style="margin-top:8px"><div class="section-title">Clients</div><div class="clients">`;
   for (const s of sources.filter(s => !s.error)) {
     const x = g?.per[s.id];
     const same = x && x.key === g.per[ed.baseId].key;
-    const checked = ed.isNew ? true : ed.check === s.id || same;
+    const checked = ed.isNew ? !ed.targets || ed.targets.includes(s.id) : ed.check === s.id || same;
     const state = !x ? '<span class="state">not added</span>'
       : `<span class="state ${x.enabled ? 'on' : ''}">${x.enabled ? 'on' : 'off'}</span>${same ? '' : ' <span class="state diff">· different settings</span>'}`;
     html += `<div class="client">
@@ -645,15 +717,7 @@ function renderForm() {
              <div class="probe-line" data-probe="${esc(s.id)}|${esc(ed.name)}">${probeLineHtml(s.id, ed.name)}</div>` : ''}
     </div>`;
   }
-  html += `</div><div class="hint">Checked clients get these settings on save. The switch and 🗑 apply immediately.</div></div>`;
-
-  $('#dBody').innerHTML = html;
-  markDraftStale();
-  $('#dFoot').innerHTML = `
-    ${ed.isNew ? '' : '<button class="btn ghost danger" id="removeAllBtn">Remove everywhere</button>'}
-    <span class="spacer"></span>
-    <button class="btn" id="cancelBtn">Cancel</button>
-    <button class="btn primary" id="saveBtn">Save</button>`;
+  return html + `</div><div class="hint">Checked clients get these settings on save.${g ? ' The switch and 🗑 apply immediately.' : ''}</div></div>`;
 }
 
 // Reads the form back into ed.form (so switching transport/base keeps what was typed).
@@ -685,8 +749,18 @@ function readForm() {
 const draftKey = (neutral, targets) => JSON.stringify({ neutral, targets });
 const draftTargets = () => $$('.target:checked').map(i => i.value);
 
+// The settings being edited, from the form or from the JSON tab; null (after a toast) if they can't be read.
+async function currentDraft() {
+  if (ed.tab !== 'json') return { name: $('#fName').value.trim(), neutral: collectForm() };
+  const d = await jsonDraft();
+  if (d === undefined) toast('Paste a server config', true);
+  return d || null;
+}
+
 async function testDraft() {
-  const neutral = collectForm(), targets = draftTargets();
+  const d = await currentDraft();
+  if (!d) return;
+  const neutral = d.neutral, targets = draftTargets();
   const key = draftKey(neutral, targets);
   ed.draftProbe = { key, pending: true };
   renderDraftProbe();
@@ -709,7 +783,7 @@ function renderDraftProbe() {
 function markDraftStale() {
   const d = ed?.draftProbe, el = $('#draftProbe');
   if (!el || !d || d.pending) return;
-  const stale = draftKey(readForm(), draftTargets()) !== d.key;
+  const stale = draftKey(ed.tab === 'json' ? jsonNeutral() : readForm(), draftTargets()) !== d.key;
   el.classList.toggle('stale', stale);
   el.title = stale ? 'The settings have changed since this test' : '';
 }
@@ -738,9 +812,10 @@ function draftProbeHtml() {
 }
 
 async function save() {
-  const neutral = collectForm();
-  const name = $('#fName').value.trim();
-  const targets = $$('.target:checked').map(i => i.value);
+  const d = await currentDraft();
+  if (!d) return;
+  const { name, neutral } = d;
+  const targets = draftTargets();
   if (ed.isNew && groups().some(g => g.name === name)) return toast(`Server "${name}" already exists`, true);
   try {
     const { warnings } = await api('saveUnified', { name, oldName: ed.isNew ? undefined : ed.name, neutral, targets });
@@ -792,10 +867,15 @@ $('#dBody').addEventListener('click', async (e) => {
   }
 });
 
-$('#dBody').addEventListener('input', () => { if (ed?.tab === 'form') markDraftStale(); });
+$('#dBody').addEventListener('input', (e) => {
+  if (e.target.id === 'jsonText') return scheduleParse();
+  if (e.target.id === 'jName') ed.draftName = e.target.value;
+  if (ed?.tab !== 'raw') markDraftStale();
+});
 
 $('#dBody').addEventListener('change', async (e) => {
   if (e.target.classList.contains('target')) { markDraftStale(); return; }
+  if (e.target.id === 'jPick') { ed.pick = +e.target.value; renderJsonStatus(); markDraftStale(); return; }
   if (e.target.id === 'baseSel') {
     ed.baseId = e.target.value;
     const draft = $('#fName').value;
@@ -814,6 +894,12 @@ $('#dFoot').addEventListener('click', async (e) => {
   const id = e.target.id;
   if (id === 'cancelBtn') closeEditor();
   if (id === 'saveBtn') save();
+  if (id === 'hideBtn') {
+    const hide = !hidden.has(ed.name);
+    try { await api('setHidden', { name: ed.name, hidden: hide }); toast(`${ed.name}: ${hide ? 'hidden from the list' : 'shown in the list'}`); }
+    catch (err) { return toast(err.message, true); }
+    return hide ? (closeEditor(), load()) : refreshKeepingDrawer();
+  }
   if (id === 'removeAllBtn') {
     if (!confirm(`Remove "${ed.name}" from all clients?`)) return;
     try { await api('removeAll', { name: ed.name }); toast('Removed'); closeEditor(); load(); }
@@ -826,6 +912,146 @@ $('#dFoot').addEventListener('click', async (e) => {
     } catch (err) { toast(err.message, true); }
   }
 });
+
+// ---------- drawer: JSON (new server) ----------
+// Takes a config pasted from a README or another client, in any popular format and wrapper
+// (the server finds it, see lib/importer.js). Switching tabs converts both ways: the form is
+// filled from the JSON, and the JSON is rebuilt from the form only if the form was changed.
+
+const JSON_EXAMPLE = `Paste a config from a README or another client, e.g.
+
+{
+  "mcpServers": {
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "…" }
+    }
+  }
+}`;
+
+const nonEmpty = (o) => o && Object.keys(o).length;
+
+// Compares form states regardless of key order and empty fields.
+function formKey(name, n) {
+  const clean = Object.entries(n).filter(([, v]) => v !== '' && v != null && !(typeof v === 'object' && !Object.keys(v).length));
+  return JSON.stringify([name.trim(), clean.sort(([a], [b]) => (a < b ? -1 : 1))]);
+}
+
+// Neutral settings -> the most common JSON shape (Claude / Cursor "mcpServers").
+function neutralToJson(name, n) {
+  const c = n.transport === 'stdio'
+    ? { command: n.command || '', args: n.args || [], ...(nonEmpty(n.env) && { env: n.env }), ...(n.cwd && { cwd: n.cwd }) }
+    : { type: n.transport, url: n.url || '', ...(nonEmpty(n.headers) && { headers: n.headers }), ...(n.bearerEnv && { bearer_token_env_var: n.bearerEnv }) };
+  return JSON.stringify(name.trim() ? { mcpServers: { [name.trim()]: c } } : c, null, 2);
+}
+
+function syncJsonFromForm() {
+  const name = ed.draftName ?? ed.name ?? '';
+  const key = formKey(name, ed.form);
+  if (key === ed.jsonKey) return;          // unchanged since the JSON was applied: keep it as typed
+  const blank = !name.trim() && !ed.form.command && !ed.form.url;
+  ed.json = blank ? '' : neutralToJson(name, ed.form);
+  ed.jsonKey = key;
+}
+
+let parseTimer = null, parseSeq = 0;
+
+function scheduleParse() {
+  clearTimeout(parseTimer);
+  renderJsonStatus();
+  parseTimer = setTimeout(() => runParse($('#jsonText').value), 250);
+}
+
+// -> { text, servers? , error? }; servers is missing for empty text.
+async function runParse(text) {
+  const seq = ++parseSeq;
+  let parsed = { text };
+  if (text.trim()) {
+    try { parsed.servers = (await api('parseImport', { text })).servers; }
+    catch (e) { parsed.error = e.message; }
+  }
+  if (!ed || seq !== parseSeq) return parsed;
+  const names = (p) => p?.servers?.map(s => s.path.join('.')).join('|');
+  if (names(parsed) !== names(ed.parsed)) ed.pick = 0;
+  ed.parsed = parsed;
+  if (ed.tab === 'json') { renderJsonStatus(); markDraftStale(); }
+  return parsed;
+}
+
+const pickedServer = (p) => p?.servers?.[ed.pick] || p?.servers?.[0];
+
+// The picked server of the current text, if it has been read already (for the "stale" mark).
+function jsonNeutral() {
+  const p = ed.parsed;
+  return p && p.text === $('#jsonText').value ? pickedServer(p)?.neutral ?? null : null;
+}
+
+// -> { name, neutral }, undefined for empty text, null (after a toast) for text that can't be read.
+async function jsonDraft() {
+  const text = $('#jsonText')?.value ?? ed.json;
+  ed.json = text;
+  clearTimeout(parseTimer);
+  const p = ed.parsed?.text === text ? ed.parsed : await runParse(text);
+  if (!text.trim()) return undefined;
+  if (p.error) { toast(p.error, true); return null; }
+  const s = pickedServer(p);
+  return { name: (s.name ?? ed.draftName ?? '').trim(), neutral: structuredClone(s.neutral) };
+}
+
+// Leaving the JSON tab: the form takes what the JSON says. False keeps the JSON tab open.
+async function applyJson() {
+  const d = await jsonDraft();
+  if (d === undefined) return true;        // nothing pasted: the form stays as it was
+  if (d === null) return confirm('The JSON can\'t be read. Switch to Settings anyway? The form keeps its previous values.');
+  ed.form = d.neutral;
+  ed.draftName = d.name;
+  ed.jsonKey = formKey(d.name, d.neutral);
+  return true;
+}
+
+function renderJson() {
+  $('#dBody').innerHTML = `
+    <textarea class="raw import" id="jsonText" spellcheck="false" placeholder="${esc(JSON_EXAMPLE)}"></textarea>
+    <div class="health" id="jsonStatus"></div>
+    <div class="hint" style="margin-bottom:18px">Understands <span class="mono">mcpServers</span> (Claude, Cursor, Windsurf, Cline, Gemini CLI),
+      <span class="mono">servers</span> (VS Code), <span class="mono">context_servers</span> (Zed), <span class="mono">mcp</span> (opencode),
+      <span class="mono">[mcp_servers.*]</span> TOML (Codex), a single <span class="mono">"name": {…}</span> entry or a bare
+      <span class="mono">{"command": …}</span> / <span class="mono">{"url": …}</span>. Comments and trailing commas are fine.</div>
+    ${testHtml()}${clientsHtml(null)}`;
+  $('#jsonText').value = ed.json;
+  $('#dFoot').innerHTML = `<span class="spacer"></span>
+    <button class="btn" id="cancelBtn">Cancel</button>
+    <button class="btn primary" id="saveBtn">Save</button>`;
+  renderJsonStatus();
+  markDraftStale();
+  if (ed.parsed?.text !== ed.json) runParse(ed.json);
+}
+
+function renderJsonStatus() {
+  const el = $('#jsonStatus');
+  if (!el) return;
+  const text = $('#jsonText').value, p = ed.parsed;
+  if (!text.trim()) { el.innerHTML = ''; return; }
+  if (p?.text !== text) { el.innerHTML = `<div class="line who">${healthIcon(null)}<span class="t">reading…</span></div>`; return; }
+  if (p.error) { el.innerHTML = `<div class="line fail"><i class="h fail">✕</i><span class="t">${esc(p.error)}</span></div>`; return; }
+  const s = pickedServer(p);
+  let html = '';
+  if (p.servers.length > 1) {
+    html += `<div class="line who"><span class="t">Found ${p.servers.length} servers, adding</span>
+      <select id="jPick">${p.servers.map((x, i) => `<option value="${i}" ${x === s ? 'selected' : ''}>${esc(x.name ?? x.path.join('.'))}</option>`).join('')}</select></div>`;
+  }
+  html += `<div class="line ok"><i class="h ok">✓</i><span class="t">${s.name ? `<b>${esc(s.name)}</b> · ` : ''}${TRANSPORT[s.neutral.transport]} ·
+    <span class="mono">${esc(describe(s.neutral))}</span></span></div>`;
+  if (s.path.length > 1) html += `<div class="line who"><span class="t">found at <span class="mono">${esc(s.path.join(' › '))}</span></span></div>`;
+  if (s.ignored.length) html += `<div class="line who"><span class="t">Not carried over: <span class="mono">${esc(s.ignored.join(', '))}</span></span></div>`;
+  if (!s.name) {
+    html += `<div class="field"><label>Name</label>
+      <input class="input mono" id="jName" value="${esc(ed.draftName ?? '')}" placeholder="my-server" spellcheck="false">
+      <div class="hint">The JSON doesn't name the server.</div></div>`;
+  }
+  el.innerHTML = html;
+}
 
 // ---------- drawer: raw ----------
 
@@ -851,18 +1077,14 @@ $('#dBody').addEventListener('click', (e) => {
   if (b) { ed.rawSource = b.dataset.raw; renderRaw(); }
 });
 $('#dBody').addEventListener('keydown', (e) => {
-  if (e.target.id === 'rawText' && e.key === 'Tab') {
+  if ((e.target.id === 'rawText' || e.target.id === 'jsonText') && e.key === 'Tab') {
     e.preventDefault();
     const el = e.target, p = el.selectionStart;
     el.setRangeText('  ', p, el.selectionEnd, 'end');
   }
 });
 
-$$('.tab').forEach(b => b.onclick = () => {
-  if (ed.tab === 'form') collectForm();
-  setTab(b.dataset.tab);
-  if (b.dataset.tab === 'form' && ed.draftName != null) $('#fName').value = ed.draftName;
-});
+$$('.tab').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
 
 // ---------- tools popover ----------
 
@@ -900,10 +1122,10 @@ $('#addBtn').onclick = () => openEditor(null);
 $('#probeAllBtn').onclick = () => probeAll(true);
 $('#closeBtn').onclick = closeEditor;
 $('#overlay').onclick = closeEditor;
-$('#q').oninput = renderList;
+$('#q').oninput = () => { renderList(); probeAll(false); };
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && ed) closeEditor();
-  if ((e.metaKey || e.ctrlKey) && e.key === 's' && ed) { e.preventDefault(); ed.tab === 'form' ? save() : $('#rawSaveBtn')?.click(); }
+  if ((e.metaKey || e.ctrlKey) && e.key === 's' && ed) { e.preventDefault(); ed.tab === 'raw' ? $('#rawSaveBtn')?.click() : save(); }
 });
 window.addEventListener('focus', () => { if (!ed) load(); });
 

@@ -17,6 +17,8 @@ All your MCP servers from **Claude Desktop**, **Claude Code**, **Codex** and **C
 - **Toggle per client** — turn any server on or off in Claude Desktop, Claude Code, Codex or Cursor.
 - **Health check** — green works, red is broken. Hover to see its tools or the error. Test new settings before saving them.
 - **Edit once** — change a server in one form and save it to every client.
+- **Paste JSON** — add a server by pasting its config from a README or another client (Claude, Cursor, VS Code, Zed, Windsurf, Cline, Gemini CLI, opencode, Codex TOML), whole file or a single entry; switch between JSON and the form at any time.
+- **Hide clutter** — keep technical servers like `computer-use` out of the list; search still finds them, and one click shows them again.
 - **Restart prompt** — know when Claude Desktop or Codex needs a restart to pick up changes.
 
 <p align="center"><img src="docs/editor.png" alt="Editing a server" width="720"></p>

@@ -21,6 +21,17 @@ const DATA_DIR = process.env.MCP_MANAGER_DATA;
 const { probe } = require('./lib/probe');
 const apps = require('./lib/apps');
 const { snapshot, getSource, getSources, toNeutral, fromNeutral, comparable, saveUnified, getRaw, saveRaw } = require('./lib/sources');
+const { parseImport } = require('./lib/importer');
+
+// Servers hidden from the list (by name). Only the page uses it; the clients' configs are untouched.
+const HIDDEN_FILE = path.join(DATA_DIR, 'hidden.json');
+function readHidden() {
+  try { const v = JSON.parse(fs.readFileSync(HIDDEN_FILE, 'utf8')); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function writeHidden(names) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+  fs.writeFileSync(HIDDEN_FILE, JSON.stringify([...new Set(names)].sort(), null, 2) + '\n');
+}
 
 const PORT = Number(process.env.PORT) || 4717;
 const HOST = '127.0.0.1';
@@ -65,6 +76,7 @@ const actions = {
         return { ...x, neutral, key: comparable(neutral) };
       }),
     })),
+    hidden: readHidden(),
   }),
 
   // { name, oldName?, neutral, targets: [sourceId] }
@@ -74,8 +86,14 @@ const actions = {
     if (!/^[\w.@-]+$/.test(name)) throw new Error('Name may contain only latin letters, digits and . _ - @');
     if (!targets?.length) throw new Error('Select at least one client');
     validateNeutral(neutral);
-    return { warnings: saveUnified({ name, oldName, neutral, targets }) };
+    const warnings = saveUnified({ name, oldName, neutral, targets });
+    const hidden = readHidden();
+    if (oldName && oldName !== name && hidden.includes(oldName)) writeHidden(hidden.map(n => (n === oldName ? name : n)));
+    return { warnings };
   },
+
+  // { text } -> servers found in a pasted config, in the neutral form (see lib/importer.js)
+  parseImport: ({ text }) => parseImport(String(text ?? '')),
 
   // { source, name }
   raw: ({ source, name }) => getRaw(getSource(source), name),
@@ -93,6 +111,15 @@ const actions = {
       try { has = s.list().some(x => x.name === name); } catch { continue; } // unreadable client: flagged in the list
       if (has) s.remove(name);
     }
+    const hidden = readHidden();
+    if (hidden.includes(name)) writeHidden(hidden.filter(n => n !== name));
+  },
+
+  // { name, hidden } -> hides the server from the list or shows it again
+  setHidden: ({ name, hidden }) => {
+    if (!name) throw new Error('Name is required');
+    const rest = readHidden().filter(n => n !== name);
+    writeHidden(hidden ? [...rest, name] : rest);
   },
 
   // { source, name, force? } -> launches the server as that client would and does the MCP handshake
